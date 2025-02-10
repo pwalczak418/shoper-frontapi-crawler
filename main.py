@@ -1,4 +1,4 @@
-#v0.03
+#v0.04
 
 import csv
 import requests
@@ -11,27 +11,19 @@ BASE_URL = config.SHOP_URL + f"/webapi/front/{config.SHOP_LANG}/products/{config
 PRODUCT_LIST_URL = config.SHOP_URL + f"/webapi/front/{config.SHOP_LANG}/products/{config.SHOP_CURRENCY}/list?page=" + "{}" + "&limit=50"
 OPTION_URL = config.SHOP_URL + f"/webapi/front/{config.SHOP_LANG}/products/{config.SHOP_CURRENCY}/" + "{}" + "/stock/"
 
-global count404
-count404 = 0
-
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'shoper-frontapi-crawler /0.03 (+https://github.com/pwalczak418/shoper-frontapi-crawler; https://pwalczak.net)',
+    'User-Agent': 'shoper-frontapi-crawler /0.04 (+https://github.com/pwalczak418/shoper-frontapi-crawler)',
     "Content-Type": "application/json",
 })
 
+###Export type 1
+
 def fetch_product_data(product_id):
-    global count404
-    if count404 == 5:
-        print("Too many 404, range probably invalid. Further actions could result in IP block")
-        sys.exit()
     url = BASE_URL.format(product_id)
     response = session.get(url)
     if response.status_code == 200:
         return response.json()
-    elif response.status_code == 404:
-        count404 +=1
-        return None
     else:
         return None
 
@@ -92,21 +84,105 @@ def get_option_price(product_id, option_id, value_id):
     price_float = received_data["price"]["gross"]["base_float"]
     return price_float
 
+###Export type 2
+
+def parse_product_data_type2(product_data):
+    rows = []
+    product_id = product_data.get("id")
+    product_code = product_data.get("code")
+    product_name = product_data.get("name", "")
+    stock_id = "" #This only apply for stock variants
+    option_code = "" #This only apply for stock variants
+
+    producer_data = product_data.get("producer", {})
+    producer = producer_data.get("name", "")
+
+    activity = "1" #FrontAPI doesn't operate on non-active products
+    option_ean = "" #This only apply for stock variants
+
+    option_avail_data = product_data.get("availability", {})
+    option_avail = option_avail_data.get("name")
+
+    option_weight_data = product_data.get("weight", {})
+    option_weight = option_weight_data.get("weight_float", "0")
+
+    option_time = "" #FrontAPI doesn't provide that data
+    avail_type = "" #FrontAPI doesn't provide that data
+    sold = "" #FrontAPI doesn't provide that data
+    option_images = ""
+    price_type = "1" #Pricetype from frontAPI is always 1
+
+    options = product_data.get("options_configuration", [])
+    for option in options:
+        if "stock" not in option or not option.get("stock"):
+            option_get_name = option.get("name", "")
+            option_id = option.get("id")
+            for value in option.get("values", []):
+                value_id = value.get("id")
+                value_name = value.get("name")
+                option_name = f"['{value_name}']"
+                rows.append([
+                    product_id, #id_prod
+                    product_code, #code_prod
+                    product_name, #name_prod
+                    option_name, #option_prod - only 1 option
+                    stock_id, #option_id
+                    option_code, #option_code
+                    producer, #producer
+                    activity, #activity
+                    option_ean, #option_ean
+                    get_option_price(product_id, option_id, value_id), #option_price
+                    option_avail, #option_avail
+                    option_weight, #option_weight
+                    option_time, #option_time
+                    option_avail, #avail_type
+                    sold, #sold
+                    option_images,
+                    price_type
+                ])
+                time.sleep(config.CRAWL_DELAY)
+    print(f"Parsed product id {product_id}")
+    print(rows)
+    return rows
+
+###Main Function
 
 def main():
-    products_ids = get_products_ids()
-    with open(config.OUTPUT_FILE, mode="w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["product_id", "product_name", "option_id", "option_name", "value_id", "value_name", "value_order", "option_float_price"])
+
+    if config.EXPORT_TYPE == 1:
+        print("Selected Export type 1")
+        products_ids = get_products_ids()
+        with open(config.OUTPUT_FILE, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["product_id", "product_name", "option_id", "option_name", "value_id", "value_name", "value_order", "option_float_price"])
+            
+            for product_id in products_ids:
+                product_data = fetch_product_data(product_id)
+                if product_data:
+                    rows = parse_product_data(product_data)
+                    writer.writerows(rows)
+                time.sleep(config.CRAWL_DELAY)
         
-        for product_id in products_ids:
-            product_data = fetch_product_data(product_id)
-            if product_data:
-                rows = parse_product_data(product_data)
-                writer.writerows(rows)
-            time.sleep(config.CRAWL_DELAY)
+        print(f"File saved: {config.OUTPUT_FILE}")
     
-    print(f"File saved: {config.OUTPUT_FILE}")
+    elif config.EXPORT_TYPE == 2:
+        print("Selected Export type 2")
+        products_ids = get_products_ids()
+        with open(config.OUTPUT_FILE, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["id_prod", "code_prod", "name_prod", "option_prod", "option_id", "option_code", "producer", "activity", "option_ean", "option_price", "option_avail", "option_weight", "option_time", "avail_type", "sold", "option_images", "pricetype"])            
+            for product_id in products_ids:
+                product_data = fetch_product_data(product_id)
+                if product_data:
+                    rows = parse_product_data_type2(product_data)
+                    writer.writerows(rows)
+                time.sleep(config.CRAWL_DELAY)
+        
+        print(f"File saved: {config.OUTPUT_FILE}")
+
+
+    else:
+        print("You need to choose the type of export")
 
 if __name__ == "__main__":
     main()
